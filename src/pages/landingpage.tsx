@@ -5,8 +5,7 @@ import { CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ShieldCheck,
   Landmark,      // For Lending & Borrowing card title          // For Loan ID
-  Coins,         // For Amount/Repayment Amount
-  User as UserIcon, // Aliased to avoid conflict if 'User' is a component name          // For Status and general info messages
+  Coins
 } from "lucide-react";
 import { Handshake, Wallet, LineChart } from 'lucide-react';
 import { Link } from "react-router-dom";
@@ -26,7 +25,7 @@ export default function LandingPage() {
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="text-5xl md:text-6xl font-bold bg-gradient-to-r from-green-500 to-gray-400 bg-clip-text text-transparent"
+            className="text-5xl md:text-6xl font-bold bg-gradient-to-r from-green-500 to-red-500 bg-clip-text text-transparent"
           >
             Decentralized Credit Revolution
           </motion.h1>

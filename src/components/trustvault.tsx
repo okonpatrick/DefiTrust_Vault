@@ -1,6 +1,13 @@
 // app/trustvault/page.tsx
 "use client";
 
+// Extend the Window interface to include 'ethereum'
+declare global {
+  interface Window {
+    ethereum?: unknown;
+  }
+}
+
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,16 +17,7 @@ import TrustChainABI from "@/abis/TrustChain.json";
 import { Input } from "@/components/ui/input"; // Assuming you have shadcn Input component
 import { Label } from "@/components/ui/label"; // Assuming you have shadcn Label component
 import { toast } from "sonner";
-
 import { CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { TrustScoreDisplay } from "@/components/trust-score-display";
-import { UserEndorsement } from "@/components/user-endorsement";
-import { LendingPoolInterface } from "@/components/lending-pool-interface";
-import { Separator } from "@/components/ui/separator";
-//import { useWeb3 } from '@/contexts/Web3Context';
-//import { useToast } from '@/hooks/use-toast';
-import type { BigNumberish } from "ethers"; // For type safety with ethers
-import { ErrorDecoder } from "ethers-decode-error";
 
 import { Progress } from "@/components/ui/progress";
 import {
@@ -29,9 +27,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Activity,
-  ImageIcon,
-  Users,
   TrendingUp,
   CheckCircle,
   XCircle,
@@ -49,9 +44,11 @@ import {
   CalendarDays,  // For Requested Date
   User as UserIcon, // Aliased to avoid conflict if 'User' is a component name
   CalendarClock, // For Repayment Deadline
-  Info,          // For Status and general info messages
+  Info,
+  PiggyBank,
+  Banknote,      // For Repay Loan button
+        // For Status and general info messages
 } from "lucide-react";
-import type { FC } from "react";
 
 const CONTRACT_ADDRESS =
   import.meta.env.VITE_PUBLIC_CONTRACT_ADDRESS || "undefined";
@@ -82,48 +79,47 @@ interface LoanData {
   status: number; // Corresponds to LoanStatus enum
 }
 
-//pasting starts here
 // Types matching contract structures (or subset for display)
-interface UserContractData {
-  userAddress: string;
-  trustScore: BigNumberish;
-  endorsementsReceivedCount: BigNumberish;
-  totalStakedOnUser: BigNumberish;
-  loansCompleted: BigNumberish;
-  loansDefaulted: BigNumberish;
-  isRegistered: boolean;
-}
+// interface UserContractData {
+//   userAddress: string;
+//   trustScore: BigNumberish;
+//   endorsementsReceivedCount: BigNumberish;
+//   totalStakedOnUser: BigNumberish;
+//   loansCompleted: BigNumberish;
+//   loansDefaulted: BigNumberish;
+//   isRegistered: boolean;
+// }
 
-interface DisplayableScoreData {
-  score: number;
-  onChainActivity: Array<{ metric: string; value: string; icon: string }>; // Keep this structure for UI
-  endorsements: number;
-  loanHistory: {
-    completed: number;
-    defaulted: number;
-  };
-  isRegistered: boolean;
-}
+// interface DisplayableScoreData {
+//   score: number;
+//   onChainActivity: Array<{ metric: string; value: string; icon: string }>; // Keep this structure for UI
+//   endorsements: number;
+//   loanHistory: {
+//     completed: number;
+//     defaulted: number;
+//   };
+//   isRegistered: boolean;
+// }
 
-interface PoolStats {
-  totalLiquidity: number; // In AVAX (ethers)
-  apy: number; // Placeholder
-  riskLevel: string; // Placeholder
-  activeLoans: number; // Count
-  availableToBorrow: number; // In AVAX (ethers)
-}
+// interface PoolStats {
+//   totalLiquidity: number; // In AVAX (ethers)
+//   apy: number; // Placeholder
+//   riskLevel: string; // Placeholder
+//   activeLoans: number; // Count
+//   availableToBorrow: number; // In AVAX (ethers)
+// }
 
-interface Endorsee {
-  id: string; // address
-  name: string; // for display, could be address or ENS if resolved
-  trustScore: number;
-  avatarUrl: string; // keep for UI, can be generic
-  dataAiHint?: string;
-}
-//pasted stops here
+// interface Endorsee {
+//   id: string; // address
+//   name: string; // for display, could be address or ENS if resolved
+//   trustScore: number;
+//   avatarUrl: string; // keep for UI, can be generic
+//   dataAiHint?: string;
+// }
 
 // Helper to convert loan status number to a readable string
 const getLoanStatusString = (status: number): string => {
+    console.log(`DEBUG_STATUS_FN: Received status value: ${status}, type: ${typeof status}`);
   switch (status) {
     case 0:
       return "Requested";
@@ -136,6 +132,8 @@ const getLoanStatusString = (status: number): string => {
     case 4:
       return "Cancelled";
     default:
+            console.log(`DEBUG_STATUS_FN: Status ${status} (type: ${typeof status}) did not match any case, returning "Unknown".`);
+
       return "Unknown";
   }
 };
@@ -152,22 +150,26 @@ export default function TrustVaultPage() {
   const [endorseeAddress, setEndorseeAddress] = useState("");
   const [endorseAmount, setEndorseAmount] = useState(""); // Stored as string, converted to BigInt/Wei later
   const [loanAmount, setLoanAmount] = useState(""); // Stored as string, converted to BigInt/Wei later
+  const [repayingLoanId, setRepayingLoanId] = useState<bigint | null>(null);
 
-  const contractAbi = TrustChainABI.abi || TrustChainABI;
+  const [totalLiquidity, setTotalLiquidity] = useState<bigint | null>(null);
+  const [isLoadingTotalLiquidity, setIsLoadingTotalLiquidity] = useState(false);
 
-  //paste here;
+
+  const contractAbi = TrustChainABI;
+
   //const { account, trustChainContract, isCorrectNetwork, setLoading: setWeb3Loading } = useWeb3();
-  const errorDecoder = ErrorDecoder.create();
-  const [userContractData, setUserContractData] =
-    useState<UserContractData | null>(null);
-  const [displayScoreData, setDisplayScoreData] =
-    useState<DisplayableScoreData | null>(null);
-  const [lendingPoolStats, setLendingPoolStats] = useState<PoolStats | null>(
-    null
-  );
-  const [potentialEndorsees, setPotentialEndorsees] = useState<Endorsee[]>([]);
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [isUserNewlyRegistered, setIsUserNewlyRegistered] = useState(false);
+  // const errorDecoder = ErrorDecoder.create();
+  // const [userContractData, setUserContractData] =
+  //   useState<UserContractData | null>(null);
+  // const [displayScoreData, setDisplayScoreData] =
+  //   useState<DisplayableScoreData | null>(null);
+  // const [lendingPoolStats, setLendingPoolStats] = useState<PoolStats | null>(
+  //   null
+  // );
+  // const [potentialEndorsees, setPotentialEndorsees] = useState<Endorsee[]>([]);
+  // const [isRegistering, setIsRegistering] = useState(false);
+  // const [isUserNewlyRegistered, setIsUserNewlyRegistered] = useState(false);
 
   //   fetchPotentialEndorsees = async () => {
   //   return(<></>)
@@ -179,7 +181,31 @@ export default function TrustVaultPage() {
   // fetchPoolData = async () => {
   //   return(<></>)
   // }
-  //stops here
+
+  async function fetchTotalLiquidity() {
+    if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === "undefined") {
+      console.error("Contract address not set, cannot fetch total liquidity.");
+      // setError("Missing contract address for liquidity."); // Or handle silently
+      return;
+    }
+    setIsLoadingTotalLiquidity(true);
+    try {
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        contractAbi,
+        provider
+      );
+      const liquidity = await contract.totalLiquidity();
+      setTotalLiquidity(liquidity);
+    } catch (e: unknown) {
+      console.error("Failed to fetch total liquidity:", e);
+      toast.error("Error", { description: "Could not fetch pool liquidity." });
+      setTotalLiquidity(null); // Clear on error
+    } finally {
+      setIsLoadingTotalLiquidity(false);
+    }
+  }
 
   useEffect(() => {
     if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === "undefined") {
@@ -202,18 +228,23 @@ export default function TrustVaultPage() {
         setError("MetaMask is not installed."); // Keep setting state if other UI depends on it
         return; // Exit early
       }
-      const provider = new ethers.BrowserProvider(window.ethereum);
+      const provider = new ethers.BrowserProvider(window.ethereum as ethers.Eip1193Provider);
       const accounts = await provider.send("eth_requestAccounts", []);
       setAccount(accounts[0]);
       const newSigner = await provider.getSigner();
       setSigner(newSigner);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Wallet connection error:", e); // Log the full error for debugging
 
       // Check for MetaMask specific "Already processing" error
       // The error code -32002 is common for this.
       // Ethers.js might wrap the original error, so check e.error.code as well.
-      if (e.code === -32002 || (e.error && e.error.code === -32002)) {
+      if (
+        typeof e === "object" &&
+        e !== null &&
+        "code" in e &&
+        (e as { code?: unknown }).code === -32002
+      ) {
         toast.info("Connection Request Pending", {
           description:
             "Please check your MetaMask extension to complete the connection request.",
@@ -221,7 +252,27 @@ export default function TrustVaultPage() {
         setError(
           "A connection request is already pending in MetaMask. Please check your extension."
         );
-      } else if (e.code === 4001) {
+      } else if (
+        typeof e === "object" &&
+        e !== null &&
+        "error" in e &&
+        typeof (e as { error?: unknown }).error === "object" &&
+        (e as { error: { code?: unknown } }).error &&
+        (e as { error: { code?: unknown } }).error.code === -32002
+      ) {
+        toast.info("Connection Request Pending", {
+          description:
+            "Please check your MetaMask extension to complete the connection request.",
+        });
+        setError(
+          "A connection request is already pending in MetaMask. Please check your extension."
+        );
+      } else if (
+        typeof e === "object" &&
+        e !== null &&
+        "code" in e &&
+        (e as { code?: unknown }).code === 4001
+      ) {
         // Standard EIP-1193 user rejected request error
         toast.warning("Connection Rejected", {
           description:
@@ -230,7 +281,12 @@ export default function TrustVaultPage() {
         setError("Wallet connection request rejected by user.");
       } else {
         const errorMessage =
-          e.message || "Failed to connect wallet. Please try again.";
+          typeof e === "object" &&
+          e !== null &&
+          "message" in e &&
+          typeof (e as { message?: unknown }).message === "string"
+            ? (e as { message: string }).message
+            : "Failed to connect wallet. Please try again.";
         toast.error("Connection Failed", {
           description: errorMessage,
         });
@@ -257,14 +313,27 @@ export default function TrustVaultPage() {
       );
       const user = await contract.getUser(account);
       setUserData(user);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Check if the error is "User not registered"
-      if (e.message && e.message.includes("User not registered")) {
+      if (
+        typeof e === "object" &&
+        e !== null &&
+        "message" in e &&
+        typeof (e as { message?: unknown }).message === "string" &&
+        (e as { message: string }).message.includes("User not registered")
+      ) {
         console.log("User not registered, showing registration button");
         // Clear error since this is an expected state for new users
         setError(null);
+      } else if (
+        typeof e === "object" &&
+        e !== null &&
+        "message" in e &&
+        typeof (e as { message?: unknown }).message === "string"
+      ) {
+        setError((e as { message: string }).message || "Failed to fetch user.");
       } else {
-        setError(e.message || "Failed to fetch user.");
+        setError("Failed to fetch user.");
       }
       setUserData(null);
     } finally {
@@ -288,8 +357,17 @@ export default function TrustVaultPage() {
       const tx = await contract.registerUser();
       await tx.wait();
       await fetchUser();
-    } catch (e: any) {
-      setError(e.message || "Failed to register.");
+    } catch (e: unknown) {
+      if (
+        e &&
+        typeof e === "object" &&
+        "message" in e &&
+        typeof (e as { message?: unknown }).message === "string"
+      ) {
+        setError((e as { message: string }).message);
+      } else {
+        setError("Failed to register.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -314,13 +392,35 @@ export default function TrustVaultPage() {
       const loanDetails: LoanData[] = [];
 
       for (const loanId of loanIds) {
-        const loan: LoanData = await contract.getLoan(loanId);
+        // Fetch raw data from the contract
+        const rawLoanData = await contract.getLoan(loanId);
 
-        loanDetails.push(loan);
+        // Log raw status and its type for definitive debugging
+        console.log(
+          `DEBUG_FETCH: Loan ID: ${rawLoanData.loanId.toString()}, ` +
+          `Raw Status value from contract: ${rawLoanData.status}, ` +
+          `Type of rawLoanData.status: ${typeof rawLoanData.status}`
+        );
+
+        // Construct the LoanData object, ensuring correct types as defined in your LoanData interface
+        const formattedLoan: LoanData = {
+          loanId: BigInt(rawLoanData.loanId),
+          borrower: rawLoanData.borrower,
+          amount: BigInt(rawLoanData.amount),
+          interestRate: BigInt(rawLoanData.interestRate),
+          repaymentAmount: BigInt(rawLoanData.repaymentAmount),
+          requestedTimestamp: BigInt(rawLoanData.requestedTimestamp),
+          approvalTimestamp: BigInt(rawLoanData.approvalTimestamp),
+          repaymentDeadline: BigInt(rawLoanData.repaymentDeadline),
+          lender: rawLoanData.lender,
+          status: Number(rawLoanData.status), // Explicitly convert status to Number
+        };
+        loanDetails.push(formattedLoan);
+        
       }
       setActiveLoans(loanDetails);
-    } catch (e: any) {
-      setError(e.message || "Failed to fetch active loans.");
+    } catch (e: unknown) {
+      setError((e as { message: string }).message || "Failed to fetch active loans.");
       console.error(e);
       setActiveLoans([]); // Clear old data on error
     }
@@ -344,7 +444,7 @@ export default function TrustVaultPage() {
     try {
       amountWei = ethers.parseEther(endorseAmount);
       if (amountWei <= 0n) throw new Error("Amount must be positive.");
-    } catch (e: any) {
+    } catch {
       setError("Invalid stake amount. Please enter a positive number.");
       return;
     }
@@ -365,8 +465,8 @@ export default function TrustVaultPage() {
       setEndorseeAddress(""); // Clear input
       setEndorseAmount(""); // Clear input
       fetchUser(); // Refresh user data (trust score, total staked)
-    } catch (e: any) {
-      setError(e.message || "Failed to endorse user.");
+    } catch (e: unknown) {
+      setError((e as { message: string }).message || "Failed to endorse user.");
       console.error(e);
     }
     setIsLoading(false);
@@ -396,7 +496,7 @@ export default function TrustVaultPage() {
         setError("Loan amount must be a positive number.");
         return;
       }
-    } catch (e) {
+    } catch {
       setError("Invalid loan amount. Please enter a valid number.");
       return;
     }
@@ -443,6 +543,61 @@ export default function TrustVaultPage() {
       }
     } finally {
       setIsLoading(false);
+    }
+  }
+
+
+  // Effect for initial data loading that doesn't require a user wallet
+  useEffect(() => {
+    if (CONTRACT_ADDRESS && CONTRACT_ADDRESS !== "undefined") {
+      fetchTotalLiquidity();
+    } else {
+      console.log("Contract address not available for initial data load.");
+    }
+  }, []); // Runs once on mount
+
+async function handleRepayLoan(loanToRepay: LoanData) {
+    if (!signer || !CONTRACT_ADDRESS) {
+      toast.error("Error", { description: "Please connect wallet or ensure contract address is set." });
+      return;
+    }
+    if (loanToRepay.status !== 1) { // Not Approved/Active
+      toast.warning("Repayment Not Allowed", { description: "This loan is not currently active for repayment." });
+      return;
+    }
+
+    setRepayingLoanId(loanToRepay.loanId);
+    setError(null); // Clear previous general errors
+
+    try {
+      const contract = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        contractAbi,
+        signer
+      );
+
+      toast.info("Processing Repayment", { description: `Attempting to repay loan ID: ${loanToRepay.loanId.toString()}. Please confirm in your wallet.` });
+
+      const tx = await contract.repayLoan(loanToRepay.loanId, {
+        value: loanToRepay.repaymentAmount, // Send the required repayment amount
+      });
+
+      await tx.wait();
+
+      toast.success("Loan Repaid Successfully!", {
+        description: `Loan ID: ${loanToRepay.loanId.toString()} has been repaid.`,
+      });
+
+      fetchActiveLoans(); // Refresh active loans list
+      fetchUser();        // Refresh user data (trust score, completed loans)
+      fetchTotalLiquidity(); // Refresh total liquidity as it increases
+
+    } catch (e: unknown) {
+      console.error("Loan repayment failed:", e);
+      const errorMessage = e instanceof Error ? e.message : "An unknown error occurred during repayment.";
+      toast.error("Repayment Failed", { description: errorMessage });
+    } finally {
+      setRepayingLoanId(null);
     }
   }
 
@@ -655,6 +810,27 @@ export default function TrustVaultPage() {
               <CardDescription className="text-gray-200">
                 Manage your loan requests and view active loans.
               </CardDescription>
+              {/* Display Total Liquidity */}
+              {isLoadingTotalLiquidity && (
+                <div className="mt-3 pt-3 border-t border-gray-700/50">
+                  <div className="flex items-center text-gray-400">
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    <span className="text-sm">Loading pool liquidity...</span>
+                  </div>
+                </div>
+              )}
+              {!isLoadingTotalLiquidity && totalLiquidity !== null && (
+                <div className="mt-3 pt-3 border-t border-gray-700/50">
+                  <div className="flex items-center text-gray-200">
+                    <PiggyBank className="mr-2 h-5 w-5 text-teal-300" />
+                    <span className="text-sm font-medium">Total Pool Liquidity:</span>
+                    <span className="ml-auto text-lg font-semibold text-teal-300">
+                      {ethers.formatEther(totalLiquidity)} AVAX
+                    </span>
+                  </div>
+                </div>
+              )}
+
             </CardHeader>
             <CardContent className="p-6 bg-gray-800 text-gray-100 rounded-b-xl"> {/* Matched CardContent styling */}
               {account && userData?.isRegistered ? (
@@ -724,7 +900,9 @@ export default function TrustVaultPage() {
                             <p className="flex items-center">
                               <Percent className="mr-2 h-4 w-4 text-teal-400" />
                               <strong className="text-gray-200">Interest Rate:</strong>{" "}
-                              {loan.interestRate.toString()}%
+                              {/* {loan.interestRate.toString()}% */}
+                               {(Number(loan.interestRate) / 100).toFixed(2)}%
+
                             </p>
                             <p className="flex items-center">
                               <Coins className="mr-2 h-4 w-4 text-teal-400" />
@@ -770,11 +948,29 @@ export default function TrustVaultPage() {
                                 ).toLocaleDateString()}
                               </p>
                             )}
+                            {/* Repay Loan Button */}
+                            {loan.status === 1 && ( // Only show for Approved / Active loans
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="mt-2 w-full bg-green-600 hover:bg-green-700 text-white border-green-700 hover:border-green-800"
+                                onClick={() => handleRepayLoan(loan)}
+                                disabled={repayingLoanId === loan.loanId || isLoading}
+                              >
+                                {repayingLoanId === loan.loanId ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Banknote className="mr-2 h-4 w-4" />
+                                )}
+                                Repay {ethers.formatEther(loan.repaymentAmount)} AVAX
+                              </Button>
+                            )}
                           </li>
                         ))}
                       </ul>
                     )}
                   </div>
+
                 </div>
               ) : (
                 <p className="text-center text-gray-400 py-8 flex items-center justify-center">
