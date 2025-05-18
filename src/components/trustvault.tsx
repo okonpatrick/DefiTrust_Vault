@@ -12,6 +12,23 @@ import { Label } from '@/components/ui/label' // Assuming you have shadcn Label 
 import { toast } from "sonner";
 
 
+import { CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { TrustScoreDisplay } from '@/components/trust-score-display';
+import { UserEndorsement } from '@/components/user-endorsement';
+import { LendingPoolInterface } from '@/components/lending-pool-interface';
+import { Separator } from '@/components/ui/separator';
+//import { useWeb3 } from '@/contexts/Web3Context';
+//import { useToast } from '@/hooks/use-toast';
+import type { BigNumberish } from 'ethers'; // For type safety with ethers
+import { ErrorDecoder } from 'ethers-decode-error'
+
+
+import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Activity, ImageIcon, Users, TrendingUp, CheckCircle, XCircle, ShieldCheck, UserCheck } from 'lucide-react';
+import type { FC } from 'react';
+
+
 const CONTRACT_ADDRESS = import.meta.env.VITE_PUBLIC_CONTRACT_ADDRESS || 'undefined'
 const RPC_URL = import.meta.env.VITE_PUBLIC_DEFAULT_RPC_URL || 'https://api.avax-test.network/ext/bc/C/rpc'
 // You might want to add VITE_FUJI_CHAIN_ID for network checks
@@ -23,7 +40,6 @@ interface UserData {
   loansDefaulted: bigint
   totalStakedOnUser: bigint
   isRegistered: boolean;
-
 }
 
 interface LoanData {
@@ -38,6 +54,46 @@ interface LoanData {
     lender: string;
     status: number; // Corresponds to LoanStatus enum
   }
+
+//pasting starts here
+  // Types matching contract structures (or subset for display)
+interface UserContractData {
+  userAddress: string;
+  trustScore: BigNumberish;
+  endorsementsReceivedCount: BigNumberish;
+  totalStakedOnUser: BigNumberish;
+  loansCompleted: BigNumberish;
+  loansDefaulted: BigNumberish;
+  isRegistered: boolean;
+}
+
+interface DisplayableScoreData {
+  score: number;
+  onChainActivity: Array<{ metric: string; value: string; icon: string }>; // Keep this structure for UI
+  endorsements: number;
+  loanHistory: {
+    completed: number;
+    defaulted: number;
+  };
+  isRegistered: boolean;
+}
+
+interface PoolStats {
+  totalLiquidity: number; // In AVAX (ethers)
+  apy: number; // Placeholder
+  riskLevel: string; // Placeholder
+  activeLoans: number; // Count
+  availableToBorrow: number; // In AVAX (ethers)
+}
+
+interface Endorsee {
+  id: string; // address
+  name: string; // for display, could be address or ENS if resolved
+  trustScore: number;
+  avatarUrl: string; // keep for UI, can be generic
+  dataAiHint?: string;
+}
+//pasted stops here
 
   // Helper to convert loan status number to a readable string
 const getLoanStatusString = (status: number): string => {
@@ -65,6 +121,31 @@ export default function TrustVaultPage() {
   const [loanAmount, setLoanAmount] = useState(''); // Stored as string, converted to BigInt/Wei later
 
   const contractAbi = TrustChainABI.abi || TrustChainABI
+
+
+
+  //paste here;
+   //const { account, trustChainContract, isCorrectNetwork, setLoading: setWeb3Loading } = useWeb3();
+  const errorDecoder = ErrorDecoder.create()
+  const [userContractData, setUserContractData] = useState<UserContractData | null>(null);
+  const [displayScoreData, setDisplayScoreData] = useState<DisplayableScoreData | null>(null);
+  const [lendingPoolStats, setLendingPoolStats] = useState<PoolStats | null>(null);
+  const [potentialEndorsees, setPotentialEndorsees] = useState<Endorsee[]>([]);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isUserNewlyRegistered, setIsUserNewlyRegistered] = useState(false);
+
+
+//   fetchPotentialEndorsees = async () => {
+//   return(<></>)
+// }
+
+// fetchUserData = async () => {
+//   return(<></>)
+// } 
+// fetchPoolData = async () => {
+//   return(<></>)
+// }
+//stops here
 
   useEffect(() => {
     if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === 'undefined') {
@@ -269,6 +350,164 @@ export default function TrustVaultPage() {
   }
   
   return (
+    <>
+     <main className="flex-grow container mx-auto px-4 py-8">
+        {account && !displayScoreData?.isRegistered && !isUserNewlyRegistered && (
+          <Card className="mb-8 p-6 bg-card shadow-lg rounded-xl">
+            <CardHeader>
+              <CardTitle>Welcome to TrustChain!</CardTitle>
+              <CardDescription>
+                To participate in lending, borrowing, and endorsements, please register your account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button disabled={isRegistering} size="lg">
+                {isRegistering ? 'Registering...' : 'Register Your Account'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {(!account) && (
+           <Card className="mb-8 p-6 bg-card shadow-lg rounded-xl text-center">
+            <CardHeader>
+              <CardTitle>Connect to TrustChain</CardTitle>
+              <CardDescription>
+                Please connect your wallet and ensure you are on the Avalanche Fuji Testnet to use the platform.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
+        {displayScoreData && lendingPoolStats ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="md:col-span-1">
+              <TrustScoreDisplay scoreData={displayScoreData} />
+            </div>
+            <div className="md:col-span-2 space-y-8">
+              {/* <UserEndorsement potentialEndorsees={potentialEndorsees} refreshEndorsees={fetchPotentialEndorsees} refreshUserData={fetchUserData} /> */}
+              <Separator />
+              {/* <LendingPoolInterface poolStats={lendingPoolStats} refreshPoolStats={fetchPoolData} refreshUserData={fetchUserData}/> */}
+            </div>
+          </div>
+        ) : account && displayScoreData?.isRegistered ? (
+          <div className="text-center py-10">
+            <p className="text-xl text-muted-foreground">Loading TrustChain data...</p>
+            {/* You can add a spinner here */}
+            
+          </div>
+        ) : <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="md:col-span-1">
+          <TrustScoreDisplay scoreData={displayScoreData} />
+        </div>
+        <div className="md:col-span-2 space-y-8">
+          {/* <UserEndorsement potentialEndorsees={potentialEndorsees} refreshEndorsees={fetchPotentialEndorsees} refreshUserData={fetchUserData} /> */}
+          <Separator />
+          {/* <LendingPoolInterface poolStats={lendingPoolStats} refreshPoolStats={fetchPoolData} refreshUserData={fetchUserData}/> */}
+        </div>
+      </div>}
+      </main>
+
+
+
+
+
+
+
+
+
+
+
+ <Card className="shadow-lg rounded-xl overflow-hidden" id="trust-score">
+      <CardHeader className="bg-gradient-to-r from-primary to-teal-600 text-primary-foreground p-6">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-2xl">Your Trust Score</CardTitle>
+          <ShieldCheck className="h-8 w-8" />
+        </div>
+        <CardDescription className="text-primary-foreground/80">
+          Based on your on-chain activity and endorsements.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-6 space-y-6">
+        <div className="text-center">
+          <p className={`text-7xl font-bold`}>
+            scoreData.score
+          </p>
+          <Progress className="mt-2 h-3" />
+          <p className="text-sm text-muted-foreground mt-1">Max Score: 1000 (example)</p>
+        </div>
+
+        <div>
+          <h3 className="text-lg font-semibold mb-3 text-foreground flex items-center">
+            <Activity className="mr-2 h-5 w-5 text-primary" />
+            On-Chain Activity (Illustrative)
+          </h3>
+          <ul className="space-y-2">
+            
+          </ul>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 text-center">
+            <div>
+                <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center justify-center">
+                    <UserCheck className="mr-1 h-4 w-4 text-primary" />
+                    Endorsements Recv.
+                </h4>
+                <p className="text-2xl font-semibold text-foreground">scoreData.endorsements</p>
+            </div>
+            <div>
+                 <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center justify-center">
+                    <CheckCircle className="mr-1 h-4 w-4 text-green-500" />
+                    Loans Completed
+                </h4>
+                <p className="text-2xl font-semibold text-foreground">scoreData.loanHistory.completed</p>
+            </div>
+            <div>
+                 <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center justify-center">
+                    <XCircle className="mr-1 h-4 w-4 text-red-500" />
+                    Loans Defaulted
+                </h4>
+                <p className="text-2xl font-semibold text-foreground">scoreData.loanHistory.defaulted</p>
+            </div>
+             <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="cursor-help">
+                            <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center justify-center">
+                                <TrendingUp className="mr-1 h-4 w-4 text-primary" />
+                                Score Factors
+                            </h4>
+                            <p className="text-xs text-muted-foreground">Hover to see</p>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent className="bg-card text-card-foreground border shadow-lg rounded-md p-3">
+                        <p className="text-sm">Scores are dynamic and improve with positive on-chain behavior, successful loan repayments, and community endorsements.</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        </div>
+      </CardContent>
+    </Card>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     <div className="min-h-screen p-8 bg-gray-50">
       <motion.div
         className="max-w-2xl mx-auto"
@@ -278,37 +517,7 @@ export default function TrustVaultPage() {
       >
         <Card className="p-6">
           <CardContent className="space-y-4">
-            <h1 className="text-2xl font-bold">DeFi Trust Vault</h1>
-            <p>Decentralized, reputation-based micro-lending on Avalanche.</p>
-            {error && <p className="text-sm text-red-500 bg-red-100 p-2 rounded">{error}</p>}
-
-            {account ? (
-              <>
-                <p className="text-sm text-gray-600">Connected as: {account}</p>
-                <Button onClick={fetchUser} disabled={isLoading || !CONTRACT_ADDRESS}>
-                  {isLoading ? 'Fetching...' : 'Fetch Profile'}
-                </Button>
-                {userData ? (
-                  <div className="text-sm text-gray-800">
-                    <p>Trust Score: {userData.trustScore.toString()}</p>
-                    <p>Loans Completed: {userData.loansCompleted.toString()}</p>
-                    <p>Loans Defaulted: {userData.loansDefaulted.toString()}</p>
-                    <p>Staked On: {ethers.formatEther(userData.totalStakedOnUser)} AVAX</p>
-                  </div>
-                ) : (
-                  !isLoading && <p className="text-sm text-gray-500">No user data found. You might need to register.</p>
-                )}
-              </>
-            ) : (
-              <Button onClick={connectWallet} disabled={isLoading || !CONTRACT_ADDRESS}>
-                {isLoading ? 'Connecting...' : 'Connect Wallet'}
-              </Button>
-            )}
-            {account && (!userData || !userData.isRegistered) && (
-              <Button variant="secondary" onClick={registerUser} disabled={isLoading || !CONTRACT_ADDRESS}>
-                {isLoading ? 'Registering...' : 'Register'}
-              </Button>
-            )}
+           
             {/* Endorsement Section */}
             {account && userData?.isRegistered && (
               <Card className="p-4 mt-6">
@@ -399,5 +608,6 @@ export default function TrustVaultPage() {
         </Card>
       </motion.div>
     </div>
+    </>
   )
 }

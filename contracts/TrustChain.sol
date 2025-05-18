@@ -329,7 +329,7 @@ contract TrustChain is ReentrancyGuard {
 
     function getEndorsement(uint256 _endorsementId) external view returns (Endorsement memory) {
         require(_endorsementId <= _endorsementIds.current() && _endorsementId > 0, "Invalid endorsement ID");
-        return endorsements[_end    orsementId];
+        return endorsements[_endorsementId];
     }
     
     function getActiveLoansForUser(address _userAddr) external view returns (uint256[] memory) {
