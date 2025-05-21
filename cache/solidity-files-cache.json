@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "/home/patowhizzy/Documents/codes/Defi_Trust_Vault/trust_vault_app/contracts/TrustChain.sol": {
-      "lastModificationDate": 1747392564257,
-      "contentHash": "a78e39066974d744237dd7e223282cf7",
+      "lastModificationDate": 1747845356127,
+      "contentHash": "0814b6d0933c4088c160b80f6dce2bc0",
       "sourceName": "contracts/TrustChain.sol",
       "solcConfig": {
         "version": "0.8.24",

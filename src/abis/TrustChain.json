@@ -150,6 +150,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "collateralAmount",
+        "type": "uint256"
       }
     ],
     "name": "LoanRequested",
@@ -220,6 +226,19 @@
   },
   {
     "inputs": [],
+    "name": "COLLATERAL_REQUIREMENT_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "DEFAULT_INTEREST_RATE",
     "outputs": [
       {
@@ -286,6 +305,19 @@
   {
     "inputs": [],
     "name": "LOAN_REPAID_TRUST_BONUS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_TRUST_SCORE",
     "outputs": [
       {
         "internalType": "uint256",
@@ -499,6 +531,11 @@
             "type": "address"
           },
           {
+            "internalType": "uint256",
+            "name": "collateralAmount",
+            "type": "uint256"
+          },
+          {
             "internalType": "enum TrustChain.LoanStatus",
             "name": "status",
             "type": "uint8"
@@ -661,6 +698,11 @@
         "type": "address"
       },
       {
+        "internalType": "uint256",
+        "name": "collateralAmount",
+        "type": "uint256"
+      },
+      {
         "internalType": "enum TrustChain.LoanStatus",
         "name": "status",
         "type": "uint8"
@@ -698,13 +740,13 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "_amount",
+        "name": "_loanAmount",
         "type": "uint256"
       }
     ],
     "name": "requestLoan",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {

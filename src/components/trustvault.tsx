@@ -18,6 +18,18 @@ import { Input } from "@/components/ui/input"; // Assuming you have shadcn Input
 import { Label } from "@/components/ui/label"; // Assuming you have shadcn Label component
 import { toast } from "sonner";
 import { CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  mockTvlData,
+  mockLoanVolumeData,
+  mockUtilizationData,
+  mockActiveUsersData,
+  PIE_CHART_COLORS
+} from '@/components/chart_data/analytics'; // Adjusted import path
+
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, Cell
+} from 'recharts';
 
 import { Progress } from "@/components/ui/progress";
 import {
@@ -26,6 +38,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+
 import {
   TrendingUp,
   CheckCircle,
@@ -46,8 +59,12 @@ import {
   CalendarClock, // For Repayment Deadline
   Info,
   PiggyBank,
+  Lock,          // For Collateral icon
   Banknote,      // For Repay Loan button
-        // For Status and general info messages
+  // Icons for Analytics Section
+  BarChart3, // Already imported, can be used for Loan Volume or general analytics
+  Activity, // For Utilization Rate
+  Users, // For Active Users
 } from "lucide-react";
 
 const CONTRACT_ADDRESS =
@@ -150,6 +167,7 @@ export default function TrustVaultPage() {
   const [endorseeAddress, setEndorseeAddress] = useState("");
   const [endorseAmount, setEndorseAmount] = useState(""); // Stored as string, converted to BigInt/Wei later
   const [loanAmount, setLoanAmount] = useState(""); // Stored as string, converted to BigInt/Wei later
+  const [calculatedCollateral, setCalculatedCollateral] = useState<string>("0"); // Display calculated collateral
   const [repayingLoanId, setRepayingLoanId] = useState<bigint | null>(null);
 
   const [totalLiquidity, setTotalLiquidity] = useState<bigint | null>(null);
@@ -206,6 +224,19 @@ export default function TrustVaultPage() {
       setIsLoadingTotalLiquidity(false);
     }
   }
+
+  // Effect to calculate collateral whenever loanAmount changes
+  useEffect(() => {
+    if (loanAmount) {
+      try {
+        const amount = parseFloat(loanAmount);
+        if (!isNaN(amount) && amount > 0) {
+          // Collateral is loan amount + 30% interest = 130% of loan amount
+          setCalculatedCollateral((amount * 1.3).toFixed(4)); // Display with 4 decimal places
+        } else setCalculatedCollateral("0");
+      } catch { setCalculatedCollateral("0"); }
+    } else setCalculatedCollateral("0");
+  }, [loanAmount]);
 
   useEffect(() => {
     if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === "undefined") {
@@ -349,6 +380,7 @@ export default function TrustVaultPage() {
     setError(null);
     setIsLoading(true);
     try {
+      // Calculate collateral amount (130% of loan amount)
       const contract = new ethers.Contract(
         CONTRACT_ADDRESS,
         contractAbi,
@@ -497,7 +529,11 @@ export default function TrustVaultPage() {
         return;
       }
     } catch {
-      setError("Invalid loan amount. Please enter a valid number.");
+      toast.error("Invalid Loan Amount", {
+        description: "Please enter a valid positive number for the loan amount.",
+      });
+      setError("Invalid loan amount."); // Keep internal error state
+
       return;
     }
 
@@ -509,40 +545,85 @@ export default function TrustVaultPage() {
         contractAbi,
         signer
       );
-      const tx = await contract.requestLoan(amountWei);
+
+      // Calculate the collateral amount (130% of loan amount) using BigInt for precision
+      // amountWei is already validated and parsed from loanAmount
+      const collateralFactorNumerator = 130n; // Represents 130%
+      const collateralFactorDenominator = 100n; // Represents 100%
+      const collateralAmountWei = (amountWei * collateralFactorNumerator) / collateralFactorDenominator;
+
+      const collateralDisplay = ethers.formatEther(collateralAmountWei); // For the toast message
+
+      toast.info("Processing Loan Request", {
+        description: `Requesting loan of ${loanAmount} AVAX, locking ${collateralDisplay} AVAX as collateral. Please confirm in your wallet.`,
+      });
+
+      // Call the contract function, sending the collateral amount as value
+      const tx = await contract.requestLoan(amountWei, { value: collateralAmountWei });
       await tx.wait();
-      setError("Loan requested successfully!"); // Using setError for success message for consistency
-      setLoanAmount(""); // Clear input
+
+      toast.success("Loan Requested Successfully!", { description: `Your loan request for ${loanAmount} AVAX is being processed.` });
       fetchActiveLoans(); // Refresh active loans list
       // Optionally, refresh user data if it changes upon loan request
       // fetchUser();
     } catch (e: unknown) {
       // Log the full error object for debugging purposes
-      console.error("Loan request failed:", e);
+      console.error("Loan request failed (raw error object):", JSON.stringify(e, null, 2));
 
-      if (
-        typeof e === "object" &&
-        e !== null &&
-        "reason" in e &&
-        typeof e.reason === "string" &&
-        e.reason.includes("Trust score too low")
-      ) {
-        // Use a single, more descriptive sonner toast for this specific error
-        toast.error("Loan Request Failed: Trust score too low", {
-          description:
-            "Your current trust score does not meet the minimum requirement for this loan.",
-        });
-        // You might want to clear the general error if the toast is sufficient
-        // setError(null);
-      } else if (e instanceof Error) {
-        setError(
-          e.message || "An unexpected error occurred while requesting the loan."
-        );
-      } else {
-        setError("An unknown error occurred while requesting the loan.");
+      let detailedErrorMessage = "An unexpected error occurred while requesting the loan.";
+      let errorTitle = "Loan Request Failed";
+
+      if (typeof e === 'object' && e !== null) {
+        if ('reason' in e && typeof e.reason === 'string' && e.reason) {
+            detailedErrorMessage = e.reason;
+        } else if ('data' in e && e.data && typeof e.data === 'object' && 'message' in e.data && typeof e.data.message === 'string' && e.data.message) {
+            // Common for Hardhat node detailed errors
+            detailedErrorMessage = e.data.message;
+        } else if ('error' in e && e.error && typeof e.error === 'object' && 'message' in e.error && typeof e.error.message === 'string' && e.error.message) {
+            // Another common nesting
+            detailedErrorMessage = e.error.message;
+        } else if ('message' in e && typeof e.message === 'string' && e.message) {
+            detailedErrorMessage = e.message;
+        }
+      } else if (typeof e === 'string') {
+        detailedErrorMessage = e;
       }
+
+      // Normalize common error messages from contracts
+      if (detailedErrorMessage.toLowerCase().includes("trust score too low")) {
+        errorTitle = "Loan Request Failed: Trust Score Too Low";
+        detailedErrorMessage = "Your current trust score does not meet the minimum requirement for this loan.";
+        setError("Trust score too low.");
+      } else if (detailedErrorMessage.toLowerCase().includes("user not registered")) {
+        errorTitle = "Loan Request Failed: User Not Registered";
+        detailedErrorMessage = "You must be registered to request a loan. Please register first.";
+        setError("User not registered.");
+      } else if (detailedErrorMessage.toLowerCase().includes("incorrect collateral") || detailedErrorMessage.toLowerCase().includes("collateral amount")) {
+        errorTitle = "Loan Request Failed: Collateral Issue";
+        detailedErrorMessage = "The collateral amount sent seems incorrect or mismatched with the loan amount. Please verify and try again.";
+        setError("Incorrect collateral amount.");
+      } else if (detailedErrorMessage.toLowerCase().includes("insufficient pool liquidity") || detailedErrorMessage.toLowerCase().includes("insufficient liquidity")) {
+        errorTitle = "Loan Request Failed: Insufficient Liquidity";
+        detailedErrorMessage = "The pool does not have enough liquidity for this loan amount at the moment. Try a smaller amount or try again later.";
+        setError("Insufficient pool liquidity.");
+      } else if (detailedErrorMessage.toLowerCase().includes("caller is not the borrower")) {
+        errorTitle = "Action Denied";
+        detailedErrorMessage = "This action can only be performed by the borrower.";
+        setError("Caller is not the borrower.");
+      }
+      // Add more specific checks based on your contract's known revert reasons
+      else {
+        // For generic errors or if specific parsing above didn't catch it
+        setError(detailedErrorMessage);
+      }
+
+      toast.error(errorTitle, {
+        description: detailedErrorMessage,
+      });
+
     } finally {
       setIsLoading(false);
+      setLoanAmount(""); // Clear input on success or failure
     }
   }
 
@@ -838,7 +919,7 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                   {/* Borrowing Section - Left Column */}
                   <div className="flex-1 w-full bg-gray-700/50 rounded-lg p-6 space-y-6"> {/* Increased space-y */}
                     <h3 className="text-xl font-semibold text-gray-100 flex items-center">
-                      <HandCoins className="mr-2 h-6 w-6 text-teal-400" />
+                      <HandCoins className="mr-2 h-6 w-6 text-teal-300" />
                       Request a Loan
                     </h3>
                     <div className="space-y-2">
@@ -854,7 +935,27 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                         ) => setLoanAmount(e.target.value)}
                         disabled={isLoading}
                       />
+                    </div>  
+
+                    {/* Display Calculated Collateral */}
+                    {parseFloat(calculatedCollateral) > 0 && (
+                      <div className="p-3 bg-gray-600/50 rounded-md text-sm text-gray-200 flex items-center justify-between">
+                        <div className="flex items-center">
+                           <Lock className="mr-2 h-4 w-4 text-yellow-400" />
+                           <span className="font-medium">Required Collateral:</span>
+                        </div>
+                        <span className="font-semibold text-yellow-300">{calculatedCollateral} AVAX</span>
+                      </div>
+                    )}
+
+                    {/* Collateral Warning */}
+                    <div className="p-3 bg-red-600/30 rounded-md text-sm text-red-200 flex items-start">
+                       <ShieldCheck className="mr-2 h-5 w-5 text-red-300 flex-shrink-0" />
+                       <p>
+                         By requesting this loan, you agree to lock {calculatedCollateral} AVAX as collateral. If the loan is not repaid by the deadline, this collateral may be claimed by the protocol.
+                       </p>
                     </div>
+
                     <Button
                       className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold" // Matched button styling
                       onClick={handleRequestLoan}
@@ -867,16 +968,16 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                   {/* Active Loans Section - Right Column */}
                   <div className="flex-1 w-full bg-gray-700/50 rounded-lg p-6 space-y-6"> {/* Increased space-y */}
                     <h3 className="text-xl font-semibold text-gray-100 flex items-center">
-                      <ListChecks className="mr-2 h-6 w-6 text-teal-400" />
+                      <ListChecks className="mr-2 h-6 w-6 text-teal-300" />
                       Your Active Loans
                     </h3>
                     {isLoading && (
-                      <p className="text-sm text-gray-400"> {/* Adjusted text color */}
+                      <p className="text-sm text-gray-400">
                         Loading loans...
                       </p>
                     )}
                     {!isLoading && activeLoans.length === 0 && (
-                      <p className="text-sm text-gray-400"> {/* Adjusted text color */}
+                      <p className="text-sm text-gray-400">
                         <FileText className="inline mr-2 h-4 w-4" /> No active loans found.
                       </p>
                     )}
@@ -888,24 +989,24 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                             className="p-4 border border-gray-600 rounded-md bg-gray-750 text-sm text-gray-300 space-y-1.5" // Adjusted list item styling
                           >
                             <p className="flex items-center">
-                              <Hash className="mr-2 h-4 w-4 text-teal-400" />
+                              <Hash className="mr-2 h-4 w-4 text-teal-300" />
                               <strong className="text-gray-200">Loan ID:</strong>{" "}
                               {loan.loanId.toString()}
                             </p>
                             <p className="flex items-center">
-                              <Coins className="mr-2 h-4 w-4 text-teal-400" />
+                              <Coins className="mr-2 h-4 w-4 text-teal-300" />
                               <strong className="text-gray-200">Amount:</strong>{" "}
                               {ethers.formatEther(loan.amount)} AVAX
                             </p>
                             <p className="flex items-center">
-                              <Percent className="mr-2 h-4 w-4 text-teal-400" />
+                              <Percent className="mr-2 h-4 w-4 text-teal-300" />
                               <strong className="text-gray-200">Interest Rate:</strong>{" "}
                               {/* {loan.interestRate.toString()}% */}
                                {(Number(loan.interestRate) / 100).toFixed(2)}%
 
                             </p>
                             <p className="flex items-center">
-                              <Coins className="mr-2 h-4 w-4 text-teal-400" />
+                              <Coins className="mr-2 h-4 w-4 text-teal-300" />
                               <strong className="text-gray-200">Repayment Amount:</strong>{" "}
                               {ethers.formatEther(loan.repaymentAmount)}{" "}
                               AVAX
@@ -913,11 +1014,11 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                             <p className="flex items-center">
                               <Info className="mr-2 h-4 w-4 text-teal-400" />
                               <strong className="text-gray-200">Status:</strong>{" "}
-                              <span
+                              <span // Added span for conditional text color
                                 className={`font-semibold ${
-                                  loan.status === 1 // Approved / Active
+                                  loan.status === 1
                                     ? "text-green-400" 
-                                    : loan.status === 3 // Defaulted
+                                    : loan.status === 3
                                     ? "text-red-400"   
                                     : "text-yellow-300" 
                                 }`}
@@ -926,22 +1027,22 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                               </span>
                             </p>
                             <p className="flex items-center">
-                              <CalendarDays className="mr-2 h-4 w-4 text-teal-400" />
+                              <CalendarDays className="mr-2 h-4 w-4 text-teal-300" />
                               <strong className="text-gray-200">Requested:</strong>{" "}
                               {new Date(
                                 Number(loan.requestedTimestamp) * 1000
                               ).toLocaleDateString()}
                             </p>
-                            {loan.status === 1 && // Approved / Active
-                              loan.lender !== ethers.ZeroAddress && (
+                            {loan.status === 1 &&
+                              loan.lender !== ethers.ZeroAddress && ( // Only show lender if loan is active and lender is not zero address
                                 <p className="flex items-center">
                                   <UserIcon className="mr-2 h-4 w-4 text-teal-400" />
                                   <strong className="text-gray-200">Lender:</strong> {loan.lender}
                                 </p>
                               )}
-                            {loan.status === 1 && ( // Approved / Active
+                            {loan.status === 1 && (
                               <p className="flex items-center">
-                                <CalendarClock className="mr-2 h-4 w-4 text-teal-400" />
+                                <CalendarClock className="mr-2 h-4 w-4 text-teal-300" />
                                 <strong className="text-gray-200">Repayment Deadline:</strong>{" "}
                                 {new Date(
                                   Number(loan.repaymentDeadline) * 1000
@@ -981,6 +1082,128 @@ async function handleRepayLoan(loanToRepay: LoanData) {
           </Card>
         </motion.div>
       </div>
+
+      {/* Protocol Analytics Section */}
+      <motion.div
+        className="mx-4 md:mx-16 mt-8"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.6 }} // Delay after lending pool
+      >
+        <Card className="bg-gray-800 border-gray-700 shadow-lg rounded-xl">
+          <CardHeader className="bg-gradient-to-r from-primary to-teal-600 p-6 text-gray-100 rounded-t-xl">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-2xl font-bold flex items-center">
+                <BarChart3 className="mr-3 h-7 w-7" /> {/* Using BarChart3 for general analytics */}
+                Protocol Analytics & Insights
+              </CardTitle>
+            </div>
+            <CardDescription className="text-gray-200">
+              Overview of the platform's activity and financial health. (Mock Data)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* TVL Over Time Chart */}
+            <Card className="bg-gray-700/60 border-gray-600 shadow-md rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-gray-100 flex items-center">
+                  <TrendingUp className="mr-2 h-5 w-5 text-teal-300" />
+                  Total Value Locked (TVL)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={mockTvlData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} stroke="#9ca3af" />
+                    <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} />
+                    <YAxis stroke="#9ca3af" fontSize={12} tickFormatter={(value) => `${value/1000}k`} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#374151', border: 'none', borderRadius: '0.5rem', color: '#e5e7eb' }} itemStyle={{ color: '#e5e7eb' }}/>
+                    <Line type="monotone" dataKey="tvl" stroke="#2dd4bf" strokeWidth={2} dot={{ r: 4, fill: "#2dd4bf" }} activeDot={{ r: 6 }} name="TVL (AVAX)" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Loan Volume Dynamics Chart */}
+            <Card className="bg-gray-700/60 border-gray-600 shadow-md rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-gray-100 flex items-center">
+                  <Landmark className="mr-2 h-5 w-5 text-teal-300" /> {/* Using Landmark for volume */}
+                  Loan Volume Dynamics
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={mockLoanVolumeData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} stroke="#9ca3af" />
+                    <XAxis dataKey="month" stroke="#9ca3af" fontSize={12} />
+                    <YAxis stroke="#9ca3af" fontSize={12} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#374151', border: 'none', borderRadius: '0.5rem' }} itemStyle={{ color: '#e5e7eb' }}/>
+                    <Legend wrapperStyle={{ fontSize: '12px', color: '#d1d5db' }} />
+                    <Bar dataKey="requested" fill="#0ea5e9" name="Requested (AVAX)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="approved" fill="#2dd4bf" name="Approved (AVAX)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="repaid" fill="#10b981" name="Repaid (AVAX)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Liquidity Utilization Rate Chart */}
+            <Card className="bg-gray-700/60 border-gray-600 shadow-md rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-gray-100 flex items-center">
+                  <Activity className="mr-2 h-5 w-5 text-teal-300" />
+                  Liquidity Utilization Rate
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={mockUtilizationData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} stroke="#9ca3af" />
+                    <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} />
+                    <YAxis stroke="#9ca3af" fontSize={12} unit="%" domain={[0, 100]} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#374151', border: 'none', borderRadius: '0.5rem' }} itemStyle={{ color: '#e5e7eb' }} formatter={(value: number) => `${value}%`} />
+                    <Area type="monotone" dataKey="utilization" stroke="#818cf8" fill="#818cf8" fillOpacity={0.3} name="Utilization Rate" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Active User Distribution Chart */}
+            <Card className="bg-gray-700/60 border-gray-600 shadow-md rounded-lg">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-gray-100 flex items-center">
+                  <Users className="mr-2 h-5 w-5 text-teal-300" />
+                  Active User Distribution
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={mockActiveUsersData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      dataKey="value"
+                      nameKey="name"
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    >
+                      {mockActiveUsersData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={PIE_CHART_COLORS[index % PIE_CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#374151', border: 'none', borderRadius: '0.5rem' }} itemStyle={{ color: '#e5e7eb' }}/>
+                    <Legend wrapperStyle={{ fontSize: '12px', color: '#d1d5db', paddingTop: '10px' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
     </>
   );
 }

@@ -37,6 +37,7 @@ contract TrustChain is ReentrancyGuard {
         uint256 approvalTimestamp;
         uint256 repaymentDeadline;
         address lender; // Could be the contract itself (pool) or a specific lender
+        uint256 collateralAmount; // Amount of AVAX locked as collateral
         LoanStatus status;
         bool exists;
     }
@@ -61,28 +62,29 @@ contract TrustChain is ReentrancyGuard {
     // Constants
     uint256 public constant INITIAL_TRUST_SCORE = 500;
     uint256 public constant MIN_TRUST_SCORE_FOR_LOAN = 400;
+    uint256 public constant MAX_TRUST_SCORE = 1000; // Maximum achievable trust score
     uint256 public constant ENDORSEMENT_TRUST_BONUS = 10; // For endorsee
     uint256 public constant LOAN_REPAID_TRUST_BONUS = 20;
     uint256 public constant LOAN_DEFAULT_TRUST_PENALTY = 100;
     uint256 public constant DEFAULT_INTEREST_RATE = 700; // 7% in basis points
     uint256 public constant LOAN_DURATION = 30 days;
+    uint256 public constant COLLATERAL_REQUIREMENT_BPS = 13000; // 130% collateral (13000 / 10000)
 
     event UserRegistered(address indexed userAddr);
     event UserEndorsed(uint256 indexed endorsementId, address indexed endorser, address indexed endorsee, uint256 amountStaked);
     event EndorsementStakeWithdrawn(uint256 indexed endorsementId, address indexed endorser, address indexed endorsee, uint256 amountWithdrawn);
     event TrustScoreUpdated(address indexed userAddr, uint256 newTrustScore);
-    
+
     event CapitalDeposited(address indexed depositor, uint256 amount);
     event CapitalWithdrawn(address indexed depositor, uint256 amount);
-    
-    event LoanRequested(uint256 indexed loanId, address indexed borrower, uint256 amount);
+    event LoanRequested(uint256 indexed loanId, address indexed borrower, uint256 amount, uint256 collateralAmount);
     event LoanApproved(uint256 indexed loanId, address indexed lender, uint256 repaymentAmount, uint256 repaymentDeadline);
     event LoanRepaid(uint256 indexed loanId);
     event LoanDefaulted(uint256 indexed loanId);
 
 
     modifier onlyRegisteredUser() {
-        require(isUserRegistered[msg.sender], "User not registered");
+        require(isUserRegistered[msg.sender], "User: Caller not registered");
         _;
     }
 
@@ -91,7 +93,7 @@ contract TrustChain is ReentrancyGuard {
     }
 
     function registerUser() external {
-        require(!isUserRegistered[msg.sender], "User already registered");
+        require(!isUserRegistered[msg.sender], "User: Already registered");
 
         users[msg.sender] = User({
             userAddress: msg.sender,
@@ -107,10 +109,10 @@ contract TrustChain is ReentrancyGuard {
     }
 
     function endorseUser(address _endorsee) external payable nonReentrant onlyRegisteredUser {
-        require(isUserRegistered[_endorsee], "Endorsee not registered");
-        require(_endorsee != msg.sender, "Cannot endorse yourself");
-        require(msg.value > 0, "Stake amount must be greater than 0");
-        require(userEndorsementIds[_endorsee][msg.sender] == 0, "Already endorsed this user"); // Simplified: one endorsement per pair
+        require(isUserRegistered[_endorsee], "Endorse: Endorsee not registered");
+        require(_endorsee != msg.sender, "Endorse: Cannot endorse yourself");
+        require(msg.value > 0, "Endorse: Stake amount must be positive");
+        require(userEndorsementIds[_endorsee][msg.sender] == 0, "Endorse: Already endorsed this user"); // Simplified: one endorsement per pair
 
         _endorsementIds.increment();
         uint256 endorsementId = _endorsementIds.current();
@@ -133,29 +135,29 @@ contract TrustChain is ReentrancyGuard {
         emit UserEndorsed(endorsementId, msg.sender, _endorsee, msg.value);
     }
     
-    // Simplified withdrawal: only if endorsee has no active loans. More complex logic needed for partial defaults.
+    // Simplified withdrawal: only if endorsee has no *Approved* loans. 
+    // A more robust system would need to handle how stakes are affected by defaults more granularly.
     function withdrawEndorsementStake(address _endorsee) external nonReentrant onlyRegisteredUser {
         uint256 endorsementId = userEndorsementIds[_endorsee][msg.sender];
-        require(endorsementId != 0, "No active endorsement for this user");
+        require(endorsementId != 0, "WithdrawEndorse: No active endorsement for this user by you");
         Endorsement storage endorsement = endorsements[endorsementId];
-        require(endorsement.endorser == msg.sender, "Not your endorsement");
-        require(endorsement.active, "Endorsement not active");
+        require(endorsement.endorser == msg.sender, "WithdrawEndorse: Not your endorsement"); // Should be redundant due to mapping structure but good for safety
+        require(endorsement.active, "WithdrawEndorse: Endorsement not active");
 
         // Check if endorsee has any *Approved* (i.e. outstanding) loans
-        // This is a simplified check. A robust system would check against specific loans covered by this endorsement.
+        // This check prevents withdrawal if the endorsee has any loan that is not yet Repaid or Defaulted.
         bool endorseeHasActiveLoans = false;
         uint256[] storage activeLoanIds = userActiveLoans[_endorsee];
         for(uint i=0; i < activeLoanIds.length; i++){
             if(loans[activeLoanIds[i]].status == LoanStatus.Approved){
-                
                 endorseeHasActiveLoans = true;
                 break;
             }
         }
-        require(!endorseeHasActiveLoans, "Endorsee has active loans, cannot withdraw stake yet");
+        require(!endorseeHasActiveLoans, "WithdrawEndorse: Endorsee has active (Approved) loans, cannot withdraw stake yet");
 
         uint256 amountToWithdraw = endorsement.amountStaked;
-        require(totalLiquidity >= amountToWithdraw, "Insufficient pool liquidity to withdraw stake");
+        require(totalLiquidity >= amountToWithdraw, "WithdrawEndorse: Insufficient pool liquidity to withdraw stake");
 
         endorsement.active = false;
         endorsement.amountStaked = 0;
@@ -163,7 +165,7 @@ contract TrustChain is ReentrancyGuard {
         User storage endorseeUser = users[_endorsee];
         endorseeUser.endorsementsReceivedCount--;
         endorseeUser.totalStakedOnUser -= amountToWithdraw;
-         // Optionally, adjust trust score down if an endorsement is removed
+        // Optionally, adjust trust score down if an endorsement is removed (consider implications)
         // _updateTrustScore(_endorsee, ENDORSEMENT_TRUST_BONUS, false);
 
 
@@ -185,49 +187,57 @@ contract TrustChain is ReentrancyGuard {
                 user.trustScore = 0;
             }
         }
-        // Max trust score can be capped if needed, e.g., 1000
-        // if (user.trustScore > 1000) user.trustScore = 1000;
+        if (user.trustScore > MAX_TRUST_SCORE) {
+            user.trustScore = MAX_TRUST_SCORE;
+        }
         emit TrustScoreUpdated(_userAddr, user.trustScore);
     }
 
     // --- Lending Pool ---
     function depositCapital() external payable nonReentrant onlyRegisteredUser {
-        require(msg.value > 0, "Deposit amount must be positive");
+        require(msg.value > 0, "Deposit: Amount must be positive");
         userDeposits[msg.sender] += msg.value;
         totalLiquidity += msg.value;
         emit CapitalDeposited(msg.sender, msg.value);
     }
 
     function withdrawCapital(uint256 _amount) external nonReentrant onlyRegisteredUser {
-        require(_amount > 0, "Withdrawal amount must be positive");
-        require(userDeposits[msg.sender] >= _amount, "Insufficient deposited capital");
-        // This is a basic check. A more robust system might consider pro-rata share of available liquidity
-        // if (totalLiquidity - loans outstanding) < _amount
-        require(totalLiquidity >= _amount, "Insufficient pool liquidity");
+        require(_amount > 0, "WithdrawCap: Amount must be positive");
+        require(userDeposits[msg.sender] >= _amount, "WithdrawCap: Insufficient deposited capital for user");
+        
+        // Basic check: ensure total pool liquidity is sufficient.
+        // A more advanced system would calculate "available liquidity" (totalLiquidity - sum of all active loan amounts).
+        // For now, this check prevents draining the pool below the withdrawal amount.
+        require(totalLiquidity >= _amount, "WithdrawCap: Insufficient total pool liquidity");
 
         userDeposits[msg.sender] -= _amount;
         totalLiquidity -= _amount;
         payable(msg.sender).transfer(_amount);
         emit CapitalWithdrawn(msg.sender, _amount);
     }
-
+    
     // --- Loans ---
-    function requestLoan(uint256 _amount) external nonReentrant onlyRegisteredUser {
-        require(_amount > 0, "Loan amount must be positive");
+    // User sends collateral (AVAX) with this function call (msg.value)
+    function requestLoan(uint256 _loanAmount) external payable nonReentrant onlyRegisteredUser {
+        require(_loanAmount > 0, "LoanReq: Amount must be positive");
         User storage borrower = users[msg.sender];
-        require(borrower.trustScore >= MIN_TRUST_SCORE_FOR_LOAN, "Trust score too low");
+        require(borrower.isRegistered, "LoanReq: Borrower not registered"); // Redundant due to modifier, but explicit
+        require(borrower.trustScore >= MIN_TRUST_SCORE_FOR_LOAN, "LoanReq: Trust score too low");
         // Potentially add checks like max loan amount based on trust score or existing active loans
+
+        uint256 requiredCollateral = (_loanAmount * COLLATERAL_REQUIREMENT_BPS) / 10000;
+        require(msg.value == requiredCollateral, "LoanReq: Incorrect collateral amount sent");
 
         _loanIds.increment();
         uint256 loanId = _loanIds.current();
 
-        uint256 interest = (_amount * DEFAULT_INTEREST_RATE) / 10000;
-        uint256 repaymentAmount = _amount + interest;
+        uint256 interest = (_loanAmount * DEFAULT_INTEREST_RATE) / 10000;
+        uint256 repaymentAmount = _loanAmount + interest;
 
         loans[loanId] = Loan({
             loanId: loanId,
             borrower: msg.sender,
-            amount: _amount,
+            amount: _loanAmount,
             interestRate: DEFAULT_INTEREST_RATE,
             repaymentAmount: repaymentAmount,
             requestedTimestamp: block.timestamp,
@@ -235,28 +245,33 @@ contract TrustChain is ReentrancyGuard {
             repaymentDeadline: 0,
             lender: address(0), // Will be contract address if approved from pool
             status: LoanStatus.Requested,
+            collateralAmount: msg.value, // Store the actual collateral sent
             exists: true
         });
         
-        emit LoanRequested(loanId, msg.sender, _amount);
+        // The collateral (msg.value) is now held by the contract.
+        // It will be returned upon repayment or claimed upon default.
+
+        emit LoanRequested(loanId, msg.sender, _loanAmount, msg.value);
 
         // Auto-approve for simplicity if funds available
-        if (totalLiquidity >= _amount) {
+        if (totalLiquidity >= _loanAmount) {
             _approveLoan(loanId);
         }
     }
 
     function _approveLoan(uint256 _loanId) internal {
         Loan storage loan = loans[_loanId];
-        // require(loan.status == Loan.LoanStatus.Requested, "Loan not in requested state"); // Already checked by caller context
-        require(totalLiquidity >= loan.amount, "Insufficient pool liquidity for this loan");
+        require(loan.exists, "ApproveLoan: Loan does not exist");
+        require(loan.status == LoanStatus.Requested, "ApproveLoan: Loan not in requested state");
+        require(totalLiquidity >= loan.amount, "ApproveLoan: Insufficient pool liquidity for this loan");
 
         loan.status = LoanStatus.Approved;
         loan.lender = address(this); // Loan is from the pool
         loan.approvalTimestamp = block.timestamp;
         loan.repaymentDeadline = block.timestamp + LOAN_DURATION;
         
-        totalLiquidity -= loan.amount; // Allocate funds from pool
+        totalLiquidity -= loan.amount; // Allocate (earmark) funds from pool for this loan
         userActiveLoans[loan.borrower].push(_loanId);
 
         payable(loan.borrower).transfer(loan.amount);
@@ -266,13 +281,13 @@ contract TrustChain is ReentrancyGuard {
 
     function repayLoan(uint256 _loanId) external payable nonReentrant {
         Loan storage loan = loans[_loanId];
-        require(loan.exists, "Loan does not exist");
-        require(loan.borrower == msg.sender, "Not your loan");
-        require(loan.status == LoanStatus.Approved, "Loan not in approved state");
-        require(msg.value == loan.repaymentAmount, "Incorrect repayment amount");
+        require(loan.exists, "Repay: Loan does not exist");
+        require(loan.borrower == msg.sender, "Repay: Caller is not the borrower");
+        require(loan.status == LoanStatus.Approved, "Repay: Loan not in approved state for repayment");
+        require(msg.value == loan.repaymentAmount, "Repay: Incorrect repayment amount sent");
 
         loan.status = LoanStatus.Repaid;
-        totalLiquidity += loan.repaymentAmount; // Repayment + interest goes back to pool
+        totalLiquidity += loan.repaymentAmount; // Repayment (principal + interest) goes back to pool
 
         User storage borrower = users[msg.sender];
         borrower.loansCompleted++;
@@ -288,20 +303,30 @@ contract TrustChain is ReentrancyGuard {
             }
         }
 
+        // Return collateral to borrower
+        if (loan.collateralAmount > 0) {
+            payable(loan.borrower).transfer(loan.collateralAmount);
+        }
+
         emit LoanRepaid(_loanId);
     }
 
     function liquidateDefaultedLoan(uint256 _loanId) external nonReentrant {
         Loan storage loan = loans[_loanId];
-        require(loan.exists, "Loan does not exist");
-        require(loan.status == LoanStatus.Approved, "Loan not active or already handled");
-        require(block.timestamp > loan.repaymentDeadline, "Loan not yet past deadline");
+        require(loan.exists, "Liquidate: Loan does not exist");
+        require(loan.status == LoanStatus.Approved, "Liquidate: Loan not active or already handled");
+        require(block.timestamp > loan.repaymentDeadline, "Liquidate: Loan not yet past repayment deadline");
+        // Add a check to ensure only authorized party (e.g., admin or anyone after deadline) can call this
 
         loan.status = LoanStatus.Defaulted;
 
         User storage borrower = users[loan.borrower];
         borrower.loansDefaulted++;
         _updateTrustScore(loan.borrower, LOAN_DEFAULT_TRUST_PENALTY, false);
+
+        // Claim collateral and add it to the pool liquidity
+        // This compensates the pool for the defaulted loan amount (partially or fully)
+        totalLiquidity += loan.collateralAmount;
 
         // Remove from active loans
         uint256[] storage activeLoanIds = userActiveLoans[loan.borrower];
@@ -318,17 +343,17 @@ contract TrustChain is ReentrancyGuard {
 
     // --- View Functions ---
     function getUser(address _userAddr) external view returns (User memory) {
-        require(isUserRegistered[_userAddr], "User not registered");
+        require(isUserRegistered[_userAddr], "GetUser: User not registered");
         return users[_userAddr];
     }
 
     function getLoan(uint256 _loanId) external view returns (Loan memory) {
-        require(loans[_loanId].exists, "Loan does not exist");
+        require(loans[_loanId].exists, "GetLoan: Loan does not exist");
         return loans[_loanId];
     }
 
     function getEndorsement(uint256 _endorsementId) external view returns (Endorsement memory) {
-        require(_endorsementId <= _endorsementIds.current() && _endorsementId > 0, "Invalid endorsement ID");
+        require(_endorsementId <= _endorsementIds.current() && _endorsementId > 0, "GetEndorse: Invalid endorsement ID");
         return endorsements[_endorsementId];
     }
     
