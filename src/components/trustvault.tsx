@@ -1,4 +1,4 @@
-// app/trustvault/page.tsx
+//app/trustvault/page.tsx
 "use client";
 
 // Extend the Window interface to include 'ethereum'
@@ -44,27 +44,26 @@ import {
   CheckCircle,
   XCircle,
   ShieldCheck,
-  UserCheck, // Keep existing UserCheck
-  Landmark,      // For Lending & Borrowing card title
-  HandCoins,     // For "Request a Loan" section title
-  ListChecks,    // For "Your Active Loans" section title
-  Send,          // For "Request Loan" button
-  Loader2,       // For loading state in buttons
-  FileText,      // For "No active loans" message
-  Hash,          // For Loan ID
-  Coins,         // For Amount/Repayment Amount
-  Percent,       // For Interest Rate (ensure it's aliased if 'Percent' is a component name)
-  CalendarDays,  // For Requested Date
-  User as UserIcon, // Aliased to avoid conflict if 'User' is a component name
-  CalendarClock, // For Repayment Deadline
+  UserCheck, 
+  Landmark,    
+  HandCoins, 
+  ListChecks,    
+  Send,          
+  Loader2,       
+  FileText,      
+  Hash,          
+  Coins,         
+  Percent,    
+  CalendarDays,  
+  User as UserIcon, 
+  CalendarClock,
   Info,
   PiggyBank,
-  Lock,          // For Collateral icon
-  Banknote,      // For Repay Loan button
-  // Icons for Analytics Section
-  BarChart3, // Already imported, can be used for Loan Volume or general analytics
-  Activity, // For Utilization Rate
-  Users, // For Active Users
+  Lock,          
+  Banknote,      
+  BarChart3,
+  Activity, 
+  Users, 
 } from "lucide-react";
 
 const CONTRACT_ADDRESS =
@@ -72,8 +71,6 @@ const CONTRACT_ADDRESS =
 const RPC_URL =
   import.meta.env.VITE_PUBLIC_DEFAULT_RPC_URL ||
   "https://api.avax-test.network/ext/bc/C/rpc";
-// You might want to add VITE_FUJI_CHAIN_ID for network checks
-// const EXPECTED_CHAIN_ID = import.meta.env.VITE_FUJI_CHAIN_ID;
 
 interface UserData {
   trustScore: bigint;
@@ -96,45 +93,6 @@ interface LoanData {
   status: number; // Corresponds to LoanStatus enum
 }
 
-// Types matching contract structures (or subset for display)
-// interface UserContractData {
-//   userAddress: string;
-//   trustScore: BigNumberish;
-//   endorsementsReceivedCount: BigNumberish;
-//   totalStakedOnUser: BigNumberish;
-//   loansCompleted: BigNumberish;
-//   loansDefaulted: BigNumberish;
-//   isRegistered: boolean;
-// }
-
-// interface DisplayableScoreData {
-//   score: number;
-//   onChainActivity: Array<{ metric: string; value: string; icon: string }>; // Keep this structure for UI
-//   endorsements: number;
-//   loanHistory: {
-//     completed: number;
-//     defaulted: number;
-//   };
-//   isRegistered: boolean;
-// }
-
-// interface PoolStats {
-//   totalLiquidity: number; // In AVAX (ethers)
-//   apy: number; // Placeholder
-//   riskLevel: string; // Placeholder
-//   activeLoans: number; // Count
-//   availableToBorrow: number; // In AVAX (ethers)
-// }
-
-// interface Endorsee {
-//   id: string; // address
-//   name: string; // for display, could be address or ENS if resolved
-//   trustScore: number;
-//   avatarUrl: string; // keep for UI, can be generic
-//   dataAiHint?: string;
-// }
-
-// Helper to convert loan status number to a readable string
 const getLoanStatusString = (status: number): string => {
     console.log(`DEBUG_STATUS_FN: Received status value: ${status}, type: ${typeof status}`);
   switch (status) {
@@ -175,30 +133,6 @@ export default function TrustVaultPage() {
 
 
   const contractAbi = TrustChainABI;
-
-  //const { account, trustChainContract, isCorrectNetwork, setLoading: setWeb3Loading } = useWeb3();
-  // const errorDecoder = ErrorDecoder.create();
-  // const [userContractData, setUserContractData] =
-  //   useState<UserContractData | null>(null);
-  // const [displayScoreData, setDisplayScoreData] =
-  //   useState<DisplayableScoreData | null>(null);
-  // const [lendingPoolStats, setLendingPoolStats] = useState<PoolStats | null>(
-  //   null
-  // );
-  // const [potentialEndorsees, setPotentialEndorsees] = useState<Endorsee[]>([]);
-  // const [isRegistering, setIsRegistering] = useState(false);
-  // const [isUserNewlyRegistered, setIsUserNewlyRegistered] = useState(false);
-
-  //   fetchPotentialEndorsees = async () => {
-  //   return(<></>)
-  // }
-
-  // fetchUserData = async () => {
-  //   return(<></>)
-  // }
-  // fetchPoolData = async () => {
-  //   return(<></>)
-  // }
 
   async function fetchTotalLiquidity() {
     if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === "undefined") {
@@ -267,9 +201,6 @@ export default function TrustVaultPage() {
     } catch (e: unknown) {
       console.error("Wallet connection error:", e); // Log the full error for debugging
 
-      // Check for MetaMask specific "Already processing" error
-      // The error code -32002 is common for this.
-      // Ethers.js might wrap the original error, so check e.error.code as well.
       if (
         typeof e === "object" &&
         e !== null &&
@@ -564,8 +495,6 @@ export default function TrustVaultPage() {
 
       toast.success("Loan Requested Successfully!", { description: `Your loan request for ${loanAmount} AVAX is being processed.` });
       fetchActiveLoans(); // Refresh active loans list
-      // Optionally, refresh user data if it changes upon loan request
-      // fetchUser();
     } catch (e: unknown) {
       // Log the full error object for debugging purposes
       console.error("Loan request failed (raw error object):", JSON.stringify(e, null, 2));

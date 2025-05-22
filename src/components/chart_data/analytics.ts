@@ -1,4 +1,4 @@
-// src/data/analytics.ts
+// src/chart_data/analytics.ts
 
 export const mockTvlData = [
   { date: 'Jan 24', tvl: 12000 }, { date: 'Feb 24', tvl: 15000 },

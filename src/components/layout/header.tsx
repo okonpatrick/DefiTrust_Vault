@@ -1,4 +1,3 @@
-"use client";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { MountainIcon, LogOut, Menu, X } from "lucide-react";
@@ -21,7 +20,7 @@ export function Header() {
             DeFi Trust Vault
           </h1>
         </Link>
-        <nav className="md:flex items-center gap-4 hidden">
+        <nav className="hidden md:flex items-center gap-4 ">
           <Button variant="ghost" asChild>
             <Link to="#trust-score">Trust Score</Link>
           </Button>
