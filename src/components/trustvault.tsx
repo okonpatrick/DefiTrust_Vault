@@ -613,7 +613,7 @@ async function handleRepayLoan(loanToRepay: LoanData) {
 
   return (
     <>
-      <div className="flex md:flex-row gap-6 items-stretch mx-4 md:mx-16 bg-gray-900 p-6">
+      <div className="flex gap-6 items-stretch mx-4 md:mx-16 bg-gray-900 p-6">
         {/* Trust Score Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
