@@ -35,7 +35,7 @@ export default function LandingPage() {
             transition={{ delay: 0.4 }}
             className="text-xl text-gray-400"
           >
-            Access fair credit based on community trust, not collateral. 
+            Access fair credit based on community trust, decentralized collateral. 
             Build your financial reputation across the decentralized world.
           </motion.p>
           <motion.div

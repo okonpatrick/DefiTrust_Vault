@@ -881,7 +881,7 @@ async function handleRepayLoan(loanToRepay: LoanData) {
                     <div className="p-3 bg-red-600/30 rounded-md text-sm text-red-200 flex items-start">
                        <ShieldCheck className="mr-2 h-5 w-5 text-red-300 flex-shrink-0" />
                        <p>
-                         By requesting this loan, you agree to lock {calculatedCollateral} AVAX as collateral. If the loan is not repaid by the deadline, this collateral may be claimed by the protocol.
+                         By requesting this loan, you agree to lock {calculatedCollateral} (130% of the loan amount) AVAX assert as collateral. If the loan is not repaid by the deadline, this collateral may be claimed by the protocol.
                        </p>
                     </div>
 
